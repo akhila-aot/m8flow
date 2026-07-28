@@ -55,3 +55,59 @@ async def test_get_error_details_uses_find_by_id_only():
         mock_get.assert_awaited_once()
         assert mock_get.call_args_list[0].args[0] == "/v1.0/process-instances/find-by-id/42"
         assert result["status"] == "error"
+
+
+def _instance(status: str, instance_id: int = 638) -> dict:
+    return {
+        "id": instance_id,
+        "status": status,
+        "process_model_identifier": "external-trigger-process-group/review-appointment-rev-1",
+        "start_in_seconds": 1719000000,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["error", "suspended", "waiting", "complete", "user_input_required"])
+async def test_diagnose_workflow_interpolates_no_literal_placeholders(status):
+    """Regression test: every branch must substitute real values, never leak `{process_instance_id}`/`{status}`."""
+    mcp = _register()
+    with (
+        patch("src.mcp_tools.error_management.get_auth_token", return_value="Bearer t"),
+        patch("src.mcp_tools.error_management.client.get", new_callable=AsyncMock) as mock_get,
+    ):
+        mock_get.return_value = {"process_instance": _instance(status)}
+
+        diagnosis = await mcp.tools["diagnose_workflow"](638)
+
+        assert "{process_instance_id}" not in diagnosis
+        assert "{status}" not in diagnosis
+        assert "638" in diagnosis
+
+
+@pytest.mark.asyncio
+async def test_diagnose_workflow_suspended_shows_real_instance_id_in_list_tasks_hint():
+    mcp = _register()
+    with (
+        patch("src.mcp_tools.error_management.get_auth_token", return_value="Bearer t"),
+        patch("src.mcp_tools.error_management.client.get", new_callable=AsyncMock) as mock_get,
+    ):
+        mock_get.return_value = {"process_instance": _instance("suspended")}
+
+        diagnosis = await mcp.tools["diagnose_workflow"](638)
+
+        assert "list_tasks(process_instance_id=638)" in diagnosis
+
+
+@pytest.mark.asyncio
+async def test_diagnose_workflow_unknown_status_shows_real_status_and_resource_uri():
+    mcp = _register()
+    with (
+        patch("src.mcp_tools.error_management.get_auth_token", return_value="Bearer t"),
+        patch("src.mcp_tools.error_management.client.get", new_callable=AsyncMock) as mock_get,
+    ):
+        mock_get.return_value = {"process_instance": _instance("user_input_required")}
+
+        diagnosis = await mcp.tools["diagnose_workflow"](638)
+
+        assert "Status is 'user_input_required'" in diagnosis
+        assert "workflow://638" in diagnosis

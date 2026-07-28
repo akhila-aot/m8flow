@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from src.api_client import M8flowAPIClient
+from src.errors import to_error_envelope
 from src.utils.context import get_auth_token
 from src.utils.logging import get_logger
 from src.utils.url import to_modified_id
@@ -55,7 +56,7 @@ def register_process_model_tools(mcp: FastMCP) -> None:
             return result
         except Exception as e:
             logger.error(f"Failed to list process models: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="get_process_model", description="Get details of a specific process model")
     async def get_process_model(process_model_id: str, include_template_info: bool = True) -> dict[str, Any]:
@@ -95,21 +96,19 @@ def register_process_model_tools(mcp: FastMCP) -> None:
             return result
         except Exception as e:
             logger.error(f"Failed to get process model {process_model_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="create_process_model", description="Create a new process model")
     async def create_process_model(
-        identifier: str,
+        process_model_id: str,
         display_name: str,
-        process_group_id: str,
         description: str | None = None,
     ) -> dict[str, Any]:
         """Create a new process model.
 
         Args:
-            identifier: Unique identifier for the model (e.g., "expense-approval")
+            process_model_id: Identifier for the new model, e.g. "finance/expense-approval"
             display_name: Display name for the model
-            process_group_id: Process group ID (REQUIRED, e.g., "finance")
             description: Optional description
 
         Returns:
@@ -117,15 +116,16 @@ def register_process_model_tools(mcp: FastMCP) -> None:
 
         Example:
             create_process_model(
-                identifier="expense-approval",
+                process_model_id="finance/expense-approval",
                 display_name="Expense Approval Workflow",
-                process_group_id="finance",
                 description="Workflow for approving expense reports"
             )
         """
         token = get_auth_token()
         if not token:
             return {"error": "No authentication token available"}
+
+        process_group_id, _, _ = process_model_id.partition("/")
 
         # Backend expects group ID in URL path, not body
         # Convert slashes to colons (e.g., "finance/sub" -> "finance:sub")
@@ -137,7 +137,7 @@ def register_process_model_tools(mcp: FastMCP) -> None:
         # ProcessModelInfo.description is a required positional, so always send
         # it (default "") to avoid a backend TypeError when omitted.
         data: dict[str, Any] = {
-            "id": f"{process_group_id}/{identifier}",
+            "id": process_model_id,
             "display_name": display_name,
             "description": description or "",
         }
@@ -148,7 +148,7 @@ def register_process_model_tools(mcp: FastMCP) -> None:
             return result
         except Exception as e:
             logger.error(f"Failed to create process model: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="update_process_model", description="Update an existing process model")
     async def update_process_model(
@@ -183,7 +183,7 @@ def register_process_model_tools(mcp: FastMCP) -> None:
             return result
         except Exception as e:
             logger.error(f"Failed to update process model {process_model_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="delete_process_model", description="Delete a process model")
     async def delete_process_model(process_model_id: str) -> dict[str, Any]:
@@ -206,4 +206,4 @@ def register_process_model_tools(mcp: FastMCP) -> None:
             return result or {"status": "deleted", "id": process_model_id}
         except Exception as e:
             logger.error(f"Failed to delete process model {process_model_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)

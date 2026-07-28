@@ -34,6 +34,53 @@ def _register():
 
 
 @pytest.mark.asyncio
+async def test_list_duplicate_workflows_returns_structured_ids_no_duplicates():
+    mcp = _register()
+    with (
+        patch("src.mcp_tools.cleanup_tools.get_auth_token", return_value="Bearer t"),
+        patch("src.mcp_tools.cleanup_tools.M8flowAPIClient") as mock_client_cls,
+    ):
+        client = mock_client_cls.return_value
+        client.get = AsyncMock(return_value={"results": [{"id": "finance/expense-approval"}]})
+
+        result = await mcp.tools["list_duplicate_workflows"]()
+
+        assert result["duplicate_groups"] == []
+        assert result["total_duplicate_groups"] == 0
+        assert "No duplicate workflows found" in result["markdown"]
+
+
+@pytest.mark.asyncio
+async def test_list_duplicate_workflows_returns_ids_usable_by_batch_delete():
+    """Regression test: process_model_ids must be directly usable as
+    batch_delete_workflows(workflow_ids=[...]) input, no markdown parsing needed."""
+    mcp = _register()
+    with (
+        patch("src.mcp_tools.cleanup_tools.get_auth_token", return_value="Bearer t"),
+        patch("src.mcp_tools.cleanup_tools.M8flowAPIClient") as mock_client_cls,
+    ):
+        client = mock_client_cls.return_value
+        client.get = AsyncMock(
+            return_value={
+                "results": [
+                    {"id": "sandbox/expense-test-1", "display_name": "Test 1", "created_at_in_seconds": 100},
+                    {"id": "sandbox/expense-test-2", "display_name": "Test 2", "created_at_in_seconds": 200},
+                    {"id": "finance/expense-approval", "display_name": "Approval"},
+                ]
+            }
+        )
+
+        result = await mcp.tools["list_duplicate_workflows"]()
+
+        assert result["total_duplicate_groups"] == 1
+        group = result["duplicate_groups"][0]
+        assert group["base_name"] == "sandbox/expense-test"
+        assert group["count"] == 2
+        assert group["process_model_ids"] == ["sandbox/expense-test-1", "sandbox/expense-test-2"]
+        assert "Potential Duplicate Workflows" in result["markdown"]
+
+
+@pytest.mark.asyncio
 async def test_batch_delete_force_terminates_and_deletes_instances_then_model():
     """force=True must cancel + delete running instances so the model delete succeeds."""
     mcp = _register()
@@ -109,11 +156,43 @@ async def test_create_sandbox_workflow_auto_creates_missing_group():
 
         result = await mcp.tools["create_sandbox_workflow"]("mymodel", "My Model", "<bpmn/>")
 
-        assert "Sandbox Workflow Created" in result
+        assert result["status"] == "created"
+        assert "Sandbox Workflow Created" in result["markdown"]
         # The sandbox group was auto-created.
         assert "/v1.0/process-groups" in post_paths
         # And the model was created inside it.
         assert any(p.startswith("/v1.0/process-models/sandbox") for p in post_paths)
+
+
+@pytest.mark.asyncio
+async def test_create_sandbox_workflow_returns_structured_canonical_id():
+    """Regression test: the canonical process_model_id must be a real dict field,
+    not something a caller has to parse out of the markdown summary."""
+    mcp = _register()
+    with (
+        patch("src.mcp_tools.cleanup_tools.get_auth_token", return_value="Bearer t"),
+        patch("src.mcp_tools.cleanup_tools.M8flowAPIClient") as mock_client_cls,
+    ):
+        client = mock_client_cls.return_value
+
+        async def fake_get(path, token, params=None, headers=None):
+            if "/v1.0/process-groups/" in path:
+                return {"id": "sandbox"}
+            return {"file_contents_hash": "h"}
+
+        client.get = AsyncMock(side_effect=fake_get)
+        client.post = AsyncMock(return_value={})
+        client.put = AsyncMock(return_value={})
+
+        result = await mcp.tools["create_sandbox_workflow"]("expense-test", "Expense Test", "<bpmn/>")
+
+        assert result["status"] == "created"
+        assert result["process_model_id"].startswith("sandbox/expense-test-")
+        assert result["display_name"] == "🧪 Expense Test"
+        assert result["expires_after_hours"] == 24
+        # The canonical id is a real, directly-usable "group/model" string —
+        # exactly the shape batch_delete_workflows(workflow_ids=[...]) expects.
+        assert "/" in result["process_model_id"]
 
 
 @pytest.mark.asyncio
@@ -143,7 +222,8 @@ async def test_create_sandbox_workflow_reuses_existing_group():
 
         result = await mcp.tools["create_sandbox_workflow"]("mymodel", "My Model", "<bpmn/>")
 
-        assert "Sandbox Workflow Created" in result
+        assert result["status"] == "created"
+        assert "Sandbox Workflow Created" in result["markdown"]
         # No duplicate group creation.
         assert "/v1.0/process-groups" not in post_paths
 
@@ -178,7 +258,8 @@ async def test_create_sandbox_workflow_sweeps_expired_models_first():
 
         result = await mcp.tools["create_sandbox_workflow"]("mymodel", "My Model", "<bpmn/>")
 
-        assert "Sandbox Workflow Created" in result
+        assert result["status"] == "created"
+        assert "Sandbox Workflow Created" in result["markdown"]
         # The expired sandbox model was swept before the create.
         delete_urls = [c.args[0] for c in client.delete.call_args_list]
         assert "/v1.0/process-models/sandbox:stale-probe-1" in delete_urls
@@ -210,7 +291,8 @@ async def test_create_sandbox_workflow_survives_failed_sweep():
 
         result = await mcp.tools["create_sandbox_workflow"]("mymodel", "My Model", "<bpmn/>")
 
-        assert "Sandbox Workflow Created" in result
+        assert result["status"] == "created"
+        assert "Sandbox Workflow Created" in result["markdown"]
 
 
 @pytest.mark.asyncio

@@ -10,9 +10,12 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from src.api_client import M8flowAPIClient
+from src.errors import to_error_envelope
 from src.utils.context import get_auth_token
+from src.utils.instances import resolve_instance
 from src.utils.logging import get_logger
-from src.utils.url import quote_path_segment
+from src.utils.untrusted_content import LISTING_DISCLAIMER, truncate_inline, wrap_untrusted
+from src.utils.url import quote_path_segment, to_modified_id
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -65,8 +68,12 @@ def register_resources(mcp: FastMCP) -> None:
             return json.dumps({"error": "No authentication token available"}, indent=2)
 
         try:
-            # Fetch workflow instance details
-            instance = await client.get(f"/v1.0/process-instances/{quote_path_segment(instance_id)}", token)
+            # Fetch workflow instance details (model-qualified route requires
+            # resolving the instance's process model id first).
+            _, modified_id = await resolve_instance(client, int(instance_id), token)
+            instance = await client.get(
+                f"/v1.0/process-instances/{modified_id}/{quote_path_segment(instance_id)}", token
+            )
 
             # Format as readable markdown document
             status_emoji = {"complete": "✅", "running": "🟢", "waiting": "⏳", "error": "❌", "suspended": "⏸️"}.get(
@@ -93,9 +100,9 @@ def register_resources(mcp: FastMCP) -> None:
 
             # Add workflow data/variables
             if "data" in instance and instance["data"]:
-                doc += "\n## Workflow Variables\n```json\n"
-                doc += json.dumps(instance["data"], indent=2)
-                doc += "\n```\n"
+                doc += "\n## Workflow Variables\n"
+                doc += wrap_untrusted(json.dumps(instance["data"], indent=2), label="workflow variables")
+                doc += "\n"
 
             # Add metadata
             doc += "\n## Metadata\n"
@@ -108,14 +115,10 @@ def register_resources(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to get workflow resource {instance_id}: {e}")
-            return json.dumps(
-                {
-                    "error": str(e),
-                    "instance_id": instance_id,
-                    "hint": "Check if the workflow instance exists and you have permission",
-                },
-                indent=2,
-            )
+            envelope = to_error_envelope(e)
+            envelope["instance_id"] = instance_id
+            envelope["hint"] = "Check if the workflow instance exists and you have permission"
+            return json.dumps(envelope, indent=2)
 
     @mcp.resource("task://{process_instance_id}/{task_id}")
     async def get_task_resource(process_instance_id: str, task_id: str) -> str:
@@ -148,10 +151,9 @@ def register_resources(mcp: FastMCP) -> None:
             return json.dumps({"error": "No authentication token available"}, indent=2)
 
         try:
-            # Fetch task details
+            # Fetch task details (flat /v1.0/tasks route, not nested under process-instances)
             task = await client.get(
-                f"/v1.0/process-instances/{quote_path_segment(process_instance_id)}"
-                f"/tasks/{quote_path_segment(task_id)}",
+                f"/v1.0/tasks/{quote_path_segment(process_instance_id)}/{quote_path_segment(task_id)}",
                 token,
             )
 
@@ -179,15 +181,15 @@ def register_resources(mcp: FastMCP) -> None:
 
             # Task data/form fields
             if "data" in task and task["data"]:
-                doc += "\n## Form Data\n```json\n"
-                doc += json.dumps(task["data"], indent=2)
-                doc += "\n```\n"
+                doc += "\n## Form Data\n"
+                doc += wrap_untrusted(json.dumps(task["data"], indent=2), label="task form data")
+                doc += "\n"
 
             # Properties
             if "properties" in task and task["properties"]:
-                doc += "\n## Properties\n```json\n"
-                doc += json.dumps(task["properties"], indent=2)
-                doc += "\n```\n"
+                doc += "\n## Properties\n"
+                doc += wrap_untrusted(json.dumps(task["properties"], indent=2), label="task properties")
+                doc += "\n"
 
             # Available actions hint
             doc += "\n## Available Actions\n"
@@ -204,17 +206,13 @@ def register_resources(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to get task resource {task_id}: {e}")
-            return json.dumps(
-                {
-                    "error": str(e),
-                    "process_instance_id": process_instance_id,
-                    "task_id": task_id,
-                    "hint": "Check if the task exists and you have permission",
-                },
-                indent=2,
-            )
+            envelope = to_error_envelope(e)
+            envelope["process_instance_id"] = process_instance_id
+            envelope["task_id"] = task_id
+            envelope["hint"] = "Check if the task exists and you have permission"
+            return json.dumps(envelope, indent=2)
 
-    @mcp.resource("bpmn://{model_id}")
+    @mcp.resource("bpmn://{model_id*}")
     async def get_bpmn_resource(model_id: str) -> str:
         """Read BPMN process model definition as a formatted document.
 
@@ -244,12 +242,15 @@ def register_resources(mcp: FastMCP) -> None:
             return json.dumps({"error": "No authentication token available"}, indent=2)
 
         try:
-            # Fetch process model details
-            # Note: model_id may contain slashes, needs proper encoding
-            model = await client.get(f"/v1.0/process-models/{quote_path_segment(model_id, safe=':')}", token)
+            # Fetch process model details (model_id's "/" must become ":" for the backend route)
+            model = await client.get(f"/v1.0/process-models/{to_modified_id(model_id)}", token)
 
             # Format as readable markdown document
             executable_status = "✅ Yes" if model.get("is_executable") else "⚠️ No"
+            description_block = (
+                wrap_untrusted(model.get("description", ""), label="process model description")
+                or "No description available"
+            )
 
             doc = f"""# Process Model: {model.get("display_name", "Unnamed Model")}
 
@@ -258,7 +259,7 @@ def register_resources(mcp: FastMCP) -> None:
 **Primary File:** {model.get("primary_file_name", "N/A")}
 
 ## Description
-{model.get("description", "No description available")}
+{description_block}
 
 ## Files
 """
@@ -288,14 +289,10 @@ def register_resources(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to get BPMN resource {model_id}: {e}")
-            return json.dumps(
-                {
-                    "error": str(e),
-                    "model_id": model_id,
-                    "hint": "Check if the process model exists and you have permission",
-                },
-                indent=2,
-            )
+            envelope = to_error_envelope(e)
+            envelope["model_id"] = model_id
+            envelope["hint"] = "Check if the process model exists and you have permission"
+            return json.dumps(envelope, indent=2)
 
     @mcp.resource("discovery://workflows")
     async def get_workflows_discovery() -> str:
@@ -340,6 +337,7 @@ def register_resources(mcp: FastMCP) -> None:
             # Build catalog
             doc = "# 🔍 M8Flow Workflow Catalog\n\n"
             doc += "Browse all available process models organized by category.\n\n"
+            doc += f"{LISTING_DISCLAIMER}\n\n"
             doc += "---\n\n"
 
             total_models = 0
@@ -350,7 +348,7 @@ def register_resources(mcp: FastMCP) -> None:
                 doc += f"## 📁 {group_name}\n"
 
                 if group.get("description"):
-                    doc += f"*{group['description']}*\n"
+                    doc += f"*{truncate_inline(group['description'])}*\n"
 
                 doc += f"\n**Group ID:** `{group['id']}`\n\n"
 
@@ -370,7 +368,7 @@ def register_resources(mcp: FastMCP) -> None:
                         doc += f"   - File: {model.get('primary_file_name', 'N/A')}\n"
 
                         if model.get("description"):
-                            doc += f"   - Description: {model['description']}\n"
+                            doc += f"   - Description: {truncate_inline(model['description'])}\n"
 
                         doc += f"   - Executable: {'Yes' if is_executable else 'No (Draft)'}\n"
                         doc += "\n"
@@ -390,7 +388,9 @@ def register_resources(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to get workflow discovery: {e}")
-            return json.dumps({"error": str(e), "hint": "Check backend connectivity and permissions"}, indent=2)
+            envelope = to_error_envelope(e)
+            envelope["hint"] = "Check backend connectivity and permissions"
+            return json.dumps(envelope, indent=2)
 
     @mcp.resource("discovery://tasks")
     async def get_tasks_discovery() -> str:
@@ -462,9 +462,11 @@ def register_resources(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to get tasks discovery: {e}")
-            return json.dumps({"error": str(e), "hint": "Check backend connectivity and permissions"}, indent=2)
+            envelope = to_error_envelope(e)
+            envelope["hint"] = "Check backend connectivity and permissions"
+            return json.dumps(envelope, indent=2)
 
-    @mcp.resource("examples://workflow/{model_id}")
+    @mcp.resource("examples://workflow/{model_id*}")
     async def get_workflow_examples(model_id: str) -> str:
         """Get real-world examples and starter configurations for a workflow.
 
@@ -503,8 +505,8 @@ def register_resources(mcp: FastMCP) -> None:
             return json.dumps({"error": "No authentication token available"}, indent=2)
 
         try:
-            # Get model details
-            model = await client.get(f"/v1.0/process-models/{quote_path_segment(model_id, safe=':')}", token)
+            # Get model details (model_id's "/" must become ":" for the backend route)
+            model = await client.get(f"/v1.0/process-models/{to_modified_id(model_id)}", token)
 
             # Get recent successful instances for examples
             instances_response = await client.post(
@@ -536,10 +538,14 @@ def register_resources(mcp: FastMCP) -> None:
                         starter_data[key].append(value)
 
             # Build example document
+            description_block = (
+                wrap_untrusted(model.get("description", ""), label="process model description")
+                or "No description available"
+            )
             doc = f"""# Examples: {model.get("display_name", model_id)}
 
 ## Description
-{model.get("description", "No description available")}
+{description_block}
 
 ## Common Start Data
 
@@ -594,9 +600,10 @@ start_process_instance(
 
         except Exception as e:
             logger.error(f"Failed to get workflow examples: {e}")
-            return json.dumps(
-                {"error": str(e), "model_id": model_id, "hint": "Check if the process model exists"}, indent=2
-            )
+            envelope = to_error_envelope(e)
+            envelope["model_id"] = model_id
+            envelope["hint"] = "Check if the process model exists"
+            return json.dumps(envelope, indent=2)
 
     @mcp.resource("errors://workflow/{instance_id}")
     async def get_workflow_errors(instance_id: str) -> str:
@@ -630,8 +637,11 @@ start_process_instance(
             return json.dumps({"error": "No authentication token available"}, indent=2)
 
         try:
-            # Get instance
-            instance = await client.get(f"/v1.0/process-instances/{quote_path_segment(instance_id)}", token)
+            # Get instance (model-qualified route requires resolving the model id first)
+            _, modified_id = await resolve_instance(client, int(instance_id), token)
+            instance = await client.get(
+                f"/v1.0/process-instances/{modified_id}/{quote_path_segment(instance_id)}", token
+            )
 
             status = instance.get("status", "unknown")
 
@@ -716,7 +726,9 @@ Use these tools for more information:
 
         except Exception as e:
             logger.error(f"Failed to get workflow errors: {e}")
-            return json.dumps({"error": str(e), "instance_id": instance_id}, indent=2)
+            envelope = to_error_envelope(e)
+            envelope["instance_id"] = instance_id
+            return json.dumps(envelope, indent=2)
 
     _register_template_resources(mcp)
 
@@ -846,7 +858,7 @@ def _register_template_resources(mcp: FastMCP) -> None:
 
             templates = response.get("results", [])
 
-            doc = """# 📚 Workflow Template Catalog
+            doc = f"""# 📚 Workflow Template Catalog
 
 Templates are reusable workflow blueprints for rapid process model creation.
 
@@ -854,6 +866,8 @@ Templates are reusable workflow blueprints for rapid process model creation.
 - 🌍 PUBLIC: Available to all tenants
 - 🏢 TENANT: Available within your organization
 - 🔒 PRIVATE: Available only to you
+
+{LISTING_DISCLAIMER}
 
 ---
 
@@ -897,11 +911,11 @@ Templates are reusable workflow blueprints for rapid process model creation.
                     doc += f"- **Visibility:** {template.get('visibility', 'PRIVATE')}\n"
 
                     if template.get("description"):
-                        doc += f"- **Description:** {template['description']}\n"
+                        doc += f"- **Description:** {truncate_inline(template['description'])}\n"
 
                     tags = template.get("tags", [])
                     if tags:
-                        doc += f"- **Tags:** {', '.join(tags)}\n"
+                        doc += f"- **Tags:** {truncate_inline(', '.join(tags))}\n"
 
                     files = template.get("files", [])
                     if files:
@@ -932,8 +946,7 @@ template://5
 ```python
 create_process_model_from_template(
     template_id=5,
-    process_group_id="your-group",
-    process_model_id="your-model",
+    process_model_id="your-group/your-model",
     display_name="Your Workflow Name"
 )
 ```
@@ -959,7 +972,9 @@ Use `list_templates()` tool to filter by:
 
         except Exception as e:
             logger.error(f"Failed to get templates catalog: {e}")
-            return json.dumps({"error": str(e), "hint": "Check backend connectivity and permissions"}, indent=2)
+            envelope = to_error_envelope(e)
+            envelope["hint"] = "Check backend connectivity and permissions"
+            return json.dumps(envelope, indent=2)
 
     @mcp.resource("template://{template_id}")
     async def get_template_resource(template_id: str) -> str:
@@ -1011,6 +1026,10 @@ Use `list_templates()` tool to filter by:
             )
 
             status_icon = "✅" if template.get("isPublished") else "📝"
+            description_block = (
+                wrap_untrusted(template.get("description", ""), label="template description")
+                or "No description available"
+            )
 
             doc = f"""# Template: {template.get("name", "Unnamed")} v{template.get("version", "1.0")}
 
@@ -1024,7 +1043,7 @@ Use `list_templates()` tool to filter by:
 
 ## 📝 Description
 
-{template.get("description") or "No description available"}
+{description_block}
 
 ---
 
@@ -1049,7 +1068,7 @@ This template includes:
             # Tags
             tags = template.get("tags", [])
             if tags:
-                doc += f"## 🏷️ Tags\n\n{', '.join(tags)}\n\n---\n\n"
+                doc += f"## 🏷️ Tags\n\n{wrap_untrusted(', '.join(tags), label='template tags')}\n\n---\n\n"
 
             # Usage instructions
             doc += f"""## 🚀 Usage
@@ -1059,8 +1078,7 @@ This template includes:
 ```python
 create_process_model_from_template(
     template_id={template.get("id")},
-    process_group_id="your-group",
-    process_model_id="your-model",
+    process_model_id="your-group/your-model",
     display_name="Your Workflow Name",
     description="Your workflow description"
 )
@@ -1103,22 +1121,15 @@ start_process_instance(
 
             # Add BPMN content preview if available
             if template.get("bpmnContent"):
-                doc += "\n---\n\n## 📋 BPMN Preview (First 500 characters)\n\n```xml\n"
-                bpmn = template["bpmnContent"][:500]
-                doc += bpmn
-                if len(template["bpmnContent"]) > 500:
-                    doc += "\n... (truncated)"
-                doc += "\n```\n\n*Use `get_template()` tool to get full BPMN content*\n"
+                doc += "\n---\n\n## 📋 BPMN Preview\n\n"
+                doc += wrap_untrusted(template["bpmnContent"], label="BPMN content", max_length=500)
+                doc += "\n\n*Use `get_template()` tool to get full BPMN content*\n"
 
             return doc
 
         except Exception as e:
             logger.error(f"Failed to get template resource {template_id}: {e}")
-            return json.dumps(
-                {
-                    "error": str(e),
-                    "template_id": template_id,
-                    "hint": "Check if the template exists and you have permission",
-                },
-                indent=2,
-            )
+            envelope = to_error_envelope(e)
+            envelope["template_id"] = template_id
+            envelope["hint"] = "Check if the template exists and you have permission"
+            return json.dumps(envelope, indent=2)

@@ -13,7 +13,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from src.api_client import M8flowAPIClient
-from src.errors import AuthorizationError, M8flowAPIError, NotFoundError
+from src.errors import AuthorizationError, M8flowAPIError, NotFoundError, to_error_envelope
 from src.utils.context import get_auth_token
 from src.utils.url import quote_path_segment, to_modified_id
 
@@ -133,7 +133,7 @@ async def _sweep_expired_sandbox_models(
         try:
             instances = await _list_model_instances(client, token, model_id)
         except Exception as e:
-            skipped.append(f"{model_id} (could not check instances: {e})")
+            skipped.append(f"{model_id} (could not check instances: {to_error_envelope(e)['error']['message']})")
             continue
         active = [i for i in instances if (i.get("status") or "").lower() not in _TERMINAL_STATUSES]
         if active:
@@ -149,7 +149,7 @@ async def _sweep_expired_sandbox_models(
             await client.delete(f"/v1.0/process-models/{to_modified_id(model_id)}", token)
             deleted.append(model_id)
         except Exception as e:
-            skipped.append(f"{model_id} (error: {e})")
+            skipped.append(f"{model_id} (error: {to_error_envelope(e)['error']['message']})")
 
     return deleted, skipped
 
@@ -190,7 +190,6 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
         description="Create new workflow OR update if exists (idempotent - prevents duplicates)",
     )
     async def create_or_update_process_model(
-        process_group_id: str,
         process_model_id: str,
         display_name: str,
         bpmn_content: str,
@@ -202,8 +201,7 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
         This prevents duplicate workflows when Claude retries.
 
         Args:
-            process_group_id: Process group ID
-            process_model_id: Process model ID
+            process_model_id: Full process model identifier, e.g. "sandbox/expense-test-1"
             display_name: Display name
             bpmn_content: BPMN XML content
             description: Optional description
@@ -214,13 +212,13 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
         token = get_auth_token()
         client = M8flowAPIClient()
 
+        process_group_id, _, model_name = process_model_id.partition("/")
+        modified_id = to_modified_id(process_model_id)
+
         # Check if exists
         exists = False
         try:
-            await client.get(
-                f"/v1.0/process-models/{quote_path_segment(process_group_id, safe=':')}:{quote_path_segment(process_model_id)}",
-                token,
-            )
+            await client.get(f"/v1.0/process-models/{modified_id}", token)
             exists = True
         except NotFoundError:
             exists = False
@@ -230,14 +228,13 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
 
         if exists:
             # Update existing
-            logger.info(f"Model {process_group_id}:{process_model_id} exists, updating...")
+            logger.info(f"Model {process_model_id} exists, updating...")
 
             # Get current file info
-            primary_file = f"{process_model_id}.bpmn"
+            primary_file = f"{model_name}.bpmn"
             try:
                 file_info = await client.get(
-                    f"/v1.0/process-models/{quote_path_segment(process_group_id, safe=':')}:{quote_path_segment(process_model_id)}"
-                    f"/files/{quote_path_segment(primary_file)}",
+                    f"/v1.0/process-models/{modified_id}/files/{quote_path_segment(primary_file)}",
                     token,
                 )
                 current_hash = file_info.get("file_contents_hash", "")
@@ -246,8 +243,7 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
 
             # Update BPMN
             await client.put(
-                f"/v1.0/process-models/{quote_path_segment(process_group_id, safe=':')}:{quote_path_segment(process_model_id)}"
-                f"/files/{quote_path_segment(primary_file)}",
+                f"/v1.0/process-models/{modified_id}/files/{quote_path_segment(primary_file)}",
                 token,
                 data=bpmn_content,
                 params={"file_contents_hash": current_hash} if current_hash else {},
@@ -255,7 +251,6 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
 
             return f"""# ✓ Workflow Updated (Already Existed)
 
-**Process Group:** {process_group_id}
 **Process Model:** {process_model_id}
 **Action:** Updated existing workflow
 **BPMN Size:** {len(bpmn_content)} bytes
@@ -265,11 +260,11 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
 
         else:
             # Create new
-            logger.info(f"Creating new model {process_group_id}:{process_model_id}...")
+            logger.info(f"Creating new model {process_model_id}...")
 
             # Step 1: Create model
             model_data = {
-                "id": f"{process_group_id}/{process_model_id}",
+                "id": process_model_id,
                 "display_name": display_name,
                 "description": description,
             }
@@ -278,20 +273,18 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
                 f"/v1.0/process-models/{quote_path_segment(process_group_id, safe=':')}", token, data=model_data
             )
 
-            primary_file = create_result.get("primary_file_name", f"{process_model_id}.bpmn")
+            primary_file = create_result.get("primary_file_name", f"{model_name}.bpmn")
 
             # Step 2: Get file hash
             file_info = await client.get(
-                f"/v1.0/process-models/{quote_path_segment(process_group_id, safe=':')}:{quote_path_segment(process_model_id)}"
-                f"/files/{quote_path_segment(primary_file)}",
+                f"/v1.0/process-models/{modified_id}/files/{quote_path_segment(primary_file)}",
                 token,
             )
             current_hash = file_info.get("file_contents_hash", "")
 
             # Step 3: Update BPMN
             await client.put(
-                f"/v1.0/process-models/{quote_path_segment(process_group_id, safe=':')}:{quote_path_segment(process_model_id)}"
-                f"/files/{quote_path_segment(primary_file)}",
+                f"/v1.0/process-models/{modified_id}/files/{quote_path_segment(primary_file)}",
                 token,
                 data=bpmn_content,
                 params={"file_contents_hash": current_hash},
@@ -299,7 +292,6 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
 
             return f"""# ✓ Workflow Created
 
-**Process Group:** {process_group_id}
 **Process Model:** {process_model_id}
 **Display Name:** {display_name}
 **BPMN Size:** {len(bpmn_content)} bytes
@@ -330,7 +322,8 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
             response = await client.get("/v1.0/process-models", token, params={"per_page": 1000, "recursive": True})
             models = response.get("results", [])
         except Exception as e:
-            return f"❌ Error listing models: {e}"
+            err = to_error_envelope(e)["error"]
+            return f"❌ Error listing models ({err['category']}): {err['message']}"
 
         deleted = []
         skipped = []
@@ -356,7 +349,7 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
             try:
                 instances = await _list_model_instances(client, token, model_id)
             except Exception as e:
-                skipped.append(f"{model_id} (could not check instances: {e})")
+                skipped.append(f"{model_id} (could not check instances: {to_error_envelope(e)['error']['message']})")
                 continue
             active = [i for i in instances if (i.get("status") or "").lower() not in _TERMINAL_STATUSES]
             if active:
@@ -373,7 +366,7 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
                 deleted.append(model_id)
                 logger.info(f"Deleted: {model_id}")
             except Exception as e:
-                skipped.append(f"{model_id} (error: {e})")
+                skipped.append(f"{model_id} (error: {to_error_envelope(e)['error']['message']})")
 
         result = ["# 🧹 Cleanup Complete\n"]
         result.append(f"**Deleted:** {len(deleted)} workflows\n")
@@ -394,12 +387,26 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
         name="list_duplicate_workflows",
         description="Find duplicate or similar workflow names",
     )
-    async def list_duplicate_workflows() -> str:
+    async def list_duplicate_workflows() -> dict[str, Any]:
         """
         Find duplicate/similar workflows
 
         Returns:
-            List of potential duplicates
+            {
+                "duplicate_groups": [
+                    {
+                        "base_name": "expense-test",
+                        "count": 2,
+                        "process_model_ids": ["sandbox/expense-test-1", "sandbox/expense-test-2"]
+                    }
+                ],
+                "total_duplicate_groups": 1,
+                "markdown": "... human-readable report ..."
+            }
+
+            `process_model_ids` are ready to pass directly to
+            `batch_delete_workflows(workflow_ids=[...])` — no need to parse
+            the markdown to recover them.
         """
         token = get_auth_token()
         client = M8flowAPIClient()
@@ -408,7 +415,10 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
             response = await client.get("/v1.0/process-models", token, params={"per_page": 1000, "recursive": True})
             models = response.get("results", [])
         except Exception as e:
-            return f"❌ Error listing models: {e}"
+            envelope = to_error_envelope(e)
+            envelope["duplicate_groups"] = []
+            envelope["total_duplicate_groups"] = 0
+            return envelope
 
         # Group by similar names (remove numbers/timestamps)
         from collections import defaultdict
@@ -425,9 +435,14 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
         duplicates = {k: v for k, v in groups.items() if len(v) > 1}
 
         if not duplicates:
-            return "✅ No duplicate workflows found!"
+            return {
+                "duplicate_groups": [],
+                "total_duplicate_groups": 0,
+                "markdown": "✅ No duplicate workflows found!",
+            }
 
         output = ["# 🔍 Potential Duplicate Workflows\n\n"]
+        duplicate_groups = []
 
         for base_name, models_list in duplicates.items():
             output.append(f"## {base_name} ({len(models_list)} versions)\n")
@@ -439,10 +454,22 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
                     output.append(f"    Created: {time.ctime(created)}\n")
             output.append("\n")
 
+            duplicate_groups.append(
+                {
+                    "base_name": base_name,
+                    "count": len(models_list),
+                    "process_model_ids": [model.get("id") for model in models_list],
+                }
+            )
+
         output.append(f"\n**Total duplicate groups:** {len(duplicates)}\n")
         output.append("\n**To clean up, use:** `cleanup_test_workflows()` or `batch_delete_workflows()`\n")
 
-        return "".join(output)
+        return {
+            "duplicate_groups": duplicate_groups,
+            "total_duplicate_groups": len(duplicates),
+            "markdown": "".join(output),
+        }
 
     @mcp.tool(
         name="batch_delete_workflows",
@@ -498,7 +525,7 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
                 logger.info(f"Deleted: {workflow_id}")
 
             except Exception as e:
-                failed.append(f"{workflow_id} - {str(e)}")
+                failed.append(f"{workflow_id} - {to_error_envelope(e)['error']['message']}")
 
         result = ["# 🗑️ Batch Delete Results\n\n"]
         result.append(f"**Deleted:** {len(deleted)} workflows\n")
@@ -519,24 +546,31 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
     )
     async def create_sandbox_workflow(
         process_model_id: str, display_name: str, bpmn_content: str, description: str = ""
-    ) -> str:
+    ) -> dict[str, Any]:
         """
         Create workflow in sandbox group (automatically adds timestamp)
 
         Perfect for testing - auto-deleted after 24 hours.
 
         Args:
-            process_model_id: Base name for the model
+            process_model_id: Base name for the model (timestamp is appended automatically)
             display_name: Display name
             bpmn_content: BPMN XML content
             description: Optional description
 
         Returns:
-            Success message with sandbox info
+            {
+                "status": "created",
+                "process_model_id": "sandbox/expense-test-1753260000",
+                "display_name": "🧪 Expense Test",
+                "expires_after_hours": 24,
+                "markdown": "... human-readable summary ..."
+            }
+            On failure: {"status": "error", "error": "...", "process_model_id": "..."}
         """
         token = get_auth_token()
         if not token:
-            return "❌ No authentication token available"
+            return {"status": "error", "error": "No authentication token available", "process_model_id": None}
 
         client = M8flowAPIClient()
 
@@ -598,14 +632,18 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
             )
         except Exception as e:
             logger.error(f"Failed to create sandbox workflow '{process_model_id}': {e}", exc_info=True)
-            return f"❌ Error creating sandbox workflow '{process_model_id}': {type(e).__name__}: {e}"
+            envelope = to_error_envelope(e)
+            envelope["status"] = "error"
+            envelope["process_model_id"] = f"{process_group_id}/{process_model_id}"
+            return envelope
 
-        return f"""# ✓ Sandbox Workflow Created
+        canonical_id = f"{process_group_id}/{unique_id}"
+        markdown = f"""# ✓ Sandbox Workflow Created
 
 **Process Group:** {process_group_id}
 **Process Model:** {unique_id}
 **Display Name:** 🧪 {display_name}
-**Full ID:** {process_group_id}/{unique_id}
+**Full ID:** {canonical_id}
 
 ⚠️ **Sandbox Mode Active**
 - This workflow is in the sandbox
@@ -614,9 +652,17 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
 - For production, use: `create_process_model_with_bpmn()`
 
 **Next Steps:**
-- Test: `start_process_instance('{process_group_id}/{unique_id}')`
+- Test: `start_process_instance('{canonical_id}')`
 - Cleanup: Automatic after 24h or use `cleanup_sandbox_workflows()`
 """
+
+        return {
+            "status": "created",
+            "process_model_id": canonical_id,
+            "display_name": f"🧪 {display_name}",
+            "expires_after_hours": 24,
+            "markdown": markdown,
+        }
 
     @mcp.tool(
         name="cleanup_sandbox_workflows",
@@ -657,4 +703,5 @@ def register_cleanup_tools(mcp: FastMCP) -> None:
             return "".join(result)
 
         except Exception as e:
-            return f"❌ Error during cleanup: {e}"
+            err = to_error_envelope(e)["error"]
+            return f"❌ Error during cleanup ({err['category']}): {err['message']}"

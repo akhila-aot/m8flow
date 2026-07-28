@@ -1,6 +1,6 @@
 # Makefile for m8flow-mcp
 
-.PHONY: help install dev lint format type-check test test-cov clean docker-build docker-run docker-stop deploy
+.PHONY: help install dev lint format type-check test test-cov clean docker-build docker-run docker-stop
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -34,9 +34,6 @@ test: ## Run tests
 test-cov: ## Run tests with coverage
 	pytest tests/ --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml
 
-test-watch: ## Run tests in watch mode
-	pytest-watch tests/
-
 clean: ## Clean generated files
 	rm -rf build/ dist/ *.egg-info htmlcov/ .pytest_cache/ .coverage coverage.xml
 	find . -type d -name __pycache__ -exec rm -rf {} +
@@ -54,9 +51,6 @@ docker-build-dev: ## Build Docker image (development)
 docker-run: ## Run Docker container
 	docker compose up -d
 
-docker-run-dev: ## Run Docker container (development)
-	docker compose -f docker-compose.dev.yml up -d
-
 docker-stop: ## Stop Docker containers
 	docker compose down
 
@@ -65,13 +59,6 @@ docker-logs: ## Show Docker logs
 
 docker-shell: ## Open shell in running container
 	docker compose exec m8flow-mcp /bin/sh
-
-# Deployment targets
-deploy: ## Deploy to production
-	./scripts/deploy.sh
-
-deploy-dev: ## Deploy to development
-	./scripts/deploy.sh --dev
 
 # CI/CD targets
 ci-lint: lint format-check ## Run linting for CI
@@ -91,13 +78,6 @@ run-http: ## Run server locally (HTTP mode)
 
 run-dev: ## Run server locally with auto-reload
 	DEBUG=true RELOAD=true python -m src.main
-
-# Utilities
-check-env: ## Check environment configuration
-	python check_env.py
-
-middleware-test: ## Test middleware token access
-	python test_middleware_fix.py
 
 # Database/Migration (if needed in future)
 # migrate: ## Run database migrations

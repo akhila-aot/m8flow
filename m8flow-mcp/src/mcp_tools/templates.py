@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from src.api_client import M8flowAPIClient
+from src.errors import NotFoundError, to_error_envelope
 from src.utils.context import get_auth_token
 from src.utils.logging import get_logger
 from src.utils.url import to_modified_id
@@ -37,12 +38,9 @@ async def _get_process_model_template_info(process_model_id: str, token: str) ->
     try:
         result = await client.get(f"/v1.0/m8flow/templates/process-models/{modified_id}/template-info", token)
         return result
-    except Exception as e:
-        logger.debug(f"Could not get template info for {process_model_id}: {e}")
-        # Return None if not found (model wasn't created from template)
-        if "404" in str(e) or "not found" in str(e).lower():
-            return None
-        raise
+    except NotFoundError:
+        # Model wasn't created from a template — not an error, just no provenance.
+        return None
 
 
 def register_template_tools(mcp: FastMCP) -> None:
@@ -149,7 +147,7 @@ def register_template_tools(mcp: FastMCP) -> None:
             return result
         except Exception as e:
             logger.error(f"Failed to list templates: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="get_template", description="Get template details including BPMN content and files")
     async def get_template(
@@ -199,7 +197,7 @@ def register_template_tools(mcp: FastMCP) -> None:
             return result
         except Exception as e:
             logger.error(f"Failed to get template {template_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(
         name="create_process_model_from_template",
@@ -207,7 +205,6 @@ def register_template_tools(mcp: FastMCP) -> None:
     )
     async def create_process_model_from_template(
         template_id: int,
-        process_group_id: str,
         process_model_id: str,
         display_name: str,
         description: str | None = None,
@@ -219,8 +216,7 @@ def register_template_tools(mcp: FastMCP) -> None:
 
         Args:
             template_id: Template to use
-            process_group_id: Process group where model will be created
-            process_model_id: ID for the new model (just the model name, not group/model)
+            process_model_id: Identifier for the new model, e.g. "finance/expense-approval"
             display_name: Display name for the new model
             description: Optional description
 
@@ -240,8 +236,7 @@ def register_template_tools(mcp: FastMCP) -> None:
             # Create expense approval from public template
             create_process_model_from_template(
                 template_id=5,
-                process_group_id="finance",
-                process_model_id="expense-approval",
+                process_model_id="finance/expense-approval",
                 display_name="Expense Approval Workflow",
                 description="Approval workflow for expense reports"
             )
@@ -255,9 +250,10 @@ def register_template_tools(mcp: FastMCP) -> None:
         if not token:
             return {"error": "No authentication token available"}
 
+        process_group_id, _, model_name = process_model_id.partition("/")
         body: dict[str, Any] = {
             "process_group_id": process_group_id,
-            "process_model_id": process_model_id,
+            "process_model_id": model_name,
             "display_name": display_name,
         }
 
@@ -269,7 +265,7 @@ def register_template_tools(mcp: FastMCP) -> None:
             return result
         except Exception as e:
             logger.error(f"Failed to create process model from template {template_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(
         name="get_process_model_template_info",
@@ -319,7 +315,7 @@ def register_template_tools(mcp: FastMCP) -> None:
             return await _get_process_model_template_info(process_model_id, token)
         except Exception as e:
             logger.error(f"Failed to get template info for {process_model_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="count_templates", description="Count available templates (efficient, no data fetching)")
     async def count_templates(
@@ -382,4 +378,4 @@ def register_template_tools(mcp: FastMCP) -> None:
             }
         except Exception as e:
             logger.error(f"Failed to count templates: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)

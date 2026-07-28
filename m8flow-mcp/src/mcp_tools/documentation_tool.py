@@ -470,10 +470,14 @@ def register_documentation_tool(mcp: FastMCP) -> None:
 
         Args:
             topic: Specific topic or None for overview
-            depth: Detail level (quick=summary, full=comprehensive)
+            depth: Only affects topic=None: "quick" returns the short reference
+                card, "full" returns the reference card plus every detailed
+                guide concatenated. Has no effect when topic is given — each
+                topic currently has a single guide, not separate quick/full
+                variants.
 
         Topics:
-            - None (default): Quick reference card
+            - None (default): Quick reference card (or everything, if depth="full")
             - "start_workflow": Complete guide for starting workflows
             - "complete_task": Complete guide for task completion
             - "common_patterns": Best practices and patterns
@@ -486,6 +490,9 @@ def register_documentation_tool(mcp: FastMCP) -> None:
             # Quick reference:
             tools_documentation()
 
+            # Everything, all at once:
+            tools_documentation(depth="full")
+
             # Workflow guide:
             tools_documentation(topic="start_workflow")
 
@@ -493,6 +500,10 @@ def register_documentation_tool(mcp: FastMCP) -> None:
             tools_documentation(topic="common_patterns")
         """
         if topic is None:
+            if depth == "full":
+                return "\n\n---\n\n".join(
+                    [QUICK_REFERENCE, WORKFLOW_GUIDE, TASK_GUIDE, PATTERNS_GUIDE, TROUBLESHOOTING_GUIDE]
+                )
             return QUICK_REFERENCE
 
         elif topic == "start_workflow":

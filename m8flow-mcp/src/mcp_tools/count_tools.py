@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from src.api_client import M8flowAPIClient
+from src.errors import to_error_envelope
 from src.mcp_tools.tasks import _instance_ready_tasks
 from src.utils.context import get_auth_token
 from src.utils.logging import get_logger
@@ -94,14 +95,14 @@ def register_count_tools(mcp: FastMCP) -> None:
             return {"count": count, "filters": {"process_model_id": process_model_id, "status": status}}
         except Exception as e:
             logger.error(f"Failed to count process instances: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(
         name="count_tasks",
         description="Count ready/waiting user tasks without fetching data (faster than list_tasks)",
     )
     async def count_tasks(
-        process_instance_id: str | None = None,
+        process_instance_id: int | None = None,
     ) -> dict[str, Any]:
         """Count ready/waiting user tasks efficiently.
 
@@ -132,7 +133,7 @@ def register_count_tools(mcp: FastMCP) -> None:
             # via task-info (not ownership-filtered). The tenant-wide
             # /v1.0/tasks endpoint only counts the caller's own tasks.
             if process_instance_id:
-                ready = await _instance_ready_tasks(int(process_instance_id), token)
+                ready = await _instance_ready_tasks(process_instance_id, token)
                 return {"count": len(ready), "filters": {"process_instance_id": process_instance_id}}
 
             response = await client.get("/v1.0/tasks", token, params={"page": 1, "per_page": 1})
@@ -140,7 +141,7 @@ def register_count_tools(mcp: FastMCP) -> None:
             return {"count": count, "filters": {"process_instance_id": process_instance_id}}
         except Exception as e:
             logger.error(f"Failed to count tasks: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="count_process_models", description="Count workflow templates without fetching data")
     async def count_process_models(
@@ -178,7 +179,7 @@ def register_count_tools(mcp: FastMCP) -> None:
             }
         except Exception as e:
             logger.error(f"Failed to count process models: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="count_process_groups", description="Count workflow categories")
     async def count_process_groups() -> dict[str, Any]:
@@ -199,4 +200,4 @@ def register_count_tools(mcp: FastMCP) -> None:
             return {"count": count}
         except Exception as e:
             logger.error(f"Failed to count process groups: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)

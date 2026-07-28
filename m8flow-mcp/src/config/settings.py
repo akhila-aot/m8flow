@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     m8flow_api_timeout: int = 30
 
     # Keycloak Authentication
-    keycloak_url: str = "http://localhost:8080"
+    keycloak_url: str = "http://localhost:6842"
     keycloak_realm: str = "m8flow"
     client_id: str = "m8flow-mcp"
     client_secret: str | None = None
@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     shared_realm_identifier: str | None = None
     # Keycloak "organization" client scope requested at sign-in so the token enumerates the user's
     # organization memberships (mirrors the web app's shared-realm sign-in). Set empty to disable.
-    organization_scope: str = "organization:*"
+    organization_scope: str = "organization"
 
     # Logging
     log_level: str = "INFO"

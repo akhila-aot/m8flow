@@ -47,7 +47,7 @@ async def test_upload_process_model_file_creates_when_missing():
 
         mcp = _register_tools()
         result = await mcp.tools["upload_process_model_file"](
-            "my-group", "my-model", "form-schema.json", '{"type": "object"}'
+            "my-group/my-model", "form-schema.json", '{"type": "object"}'
         )
 
         assert "Created" in result
@@ -76,7 +76,7 @@ async def test_upload_process_model_file_updates_when_exists():
         mock_get.side_effect = get_side_effect
 
         mcp = _register_tools()
-        result = await mcp.tools["upload_process_model_file"]("my-group", "my-model", "form-schema.json", "{}")
+        result = await mcp.tools["upload_process_model_file"]("my-group/my-model", "form-schema.json", "{}")
 
         assert "Updated" in result
         mock_put.assert_awaited_once()
@@ -95,7 +95,7 @@ async def test_upload_process_model_file_model_missing():
         mock_get.side_effect = NotFoundError("model not found")
 
         mcp = _register_tools()
-        result = await mcp.tools["upload_process_model_file"]("no-group", "no-model", "x.json", "{}")
+        result = await mcp.tools["upload_process_model_file"]("no-group/no-model", "x.json", "{}")
 
         assert "Model not found" in result
 
@@ -119,7 +119,7 @@ async def test_update_bpmn_file_updates_in_place():
         mock_get.side_effect = get_side_effect
 
         mcp = _register_tools()
-        result = await mcp.tools["update_bpmn_file"]("my-group", "my-model", "<bpmn/>")
+        result = await mcp.tools["update_bpmn_file"]("my-group/my-model", "<bpmn/>")
 
         assert "Updated" in result
         mock_put.assert_awaited_once()
@@ -140,7 +140,7 @@ async def test_update_bpmn_file_model_not_found():
         mock_get.side_effect = NotFoundError("model not found")
 
         mcp = _register_tools()
-        result = await mcp.tools["update_bpmn_file"]("no-group", "no-model", "<bpmn/>")
+        result = await mcp.tools["update_bpmn_file"]("no-group/no-model", "<bpmn/>")
 
         assert "Model not found" in result
 
@@ -163,9 +163,7 @@ async def test_create_template_sends_bpmn_body_with_template_headers():
         mock_post.return_value = {"id": 7, "template_key": "my-template"}
 
         mcp = _register_tools()
-        result = await mcp.tools["create_template"](
-            "my-group", "my-model", "my-template", "My Template", "A description"
-        )
+        result = await mcp.tools["create_template"]("my-group/my-model", "my-template", "My Template", "A description")
 
         assert "Template Created Successfully" in result
         assert "`7`" in result
@@ -191,7 +189,7 @@ async def test_create_template_source_model_missing():
         mock_get.side_effect = NotFoundError("model not found")
 
         mcp = _register_tools()
-        result = await mcp.tools["create_template"]("no-group", "no-model", "key", "Name")
+        result = await mcp.tools["create_template"]("no-group/no-model", "key", "Name")
 
         assert "Source model not found" in result
         mock_post.assert_not_awaited()
@@ -213,7 +211,7 @@ async def test_get_bpmn_file_uses_modified_id_route():
         mock_get.side_effect = get_side_effect
 
         mcp = _register_tools()
-        result = await mcp.tools["get_bpmn_file"]("my-group", "my-model")
+        result = await mcp.tools["get_bpmn_file"]("my-group/my-model")
 
         assert result == "<bpmn:definitions/>"
         file_call_path = mock_get.await_args_list[-1].args[0]

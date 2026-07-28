@@ -1,5 +1,6 @@
 """Custom error classes for m8flow MCP Server"""
 
+from .envelope import to_error_envelope
 from .exceptions import (
     AuthenticationError,
     AuthorizationError,
@@ -20,4 +21,5 @@ __all__ = [
     "NetworkError",
     "TimeoutError",
     "ServerError",
+    "to_error_envelope",
 ]

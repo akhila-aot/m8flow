@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from src.api_client import M8flowAPIClient
+from src.errors import to_error_envelope
 from src.utils.context import get_auth_token
 from src.utils.instances import resolve_instance
 from src.utils.logging import get_logger
@@ -115,7 +116,7 @@ def register_task_tools(mcp: FastMCP) -> None:
             return result
         except Exception as e:
             logger.error(f"Failed to list tasks: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="get_task", description="Get details of a specific task")
     async def get_task(
@@ -143,7 +144,7 @@ def register_task_tools(mcp: FastMCP) -> None:
             return result
         except Exception as e:
             logger.error(f"Failed to get task {task_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="complete_task", description="Complete a user task")
     async def complete_task(
@@ -177,7 +178,7 @@ def register_task_tools(mcp: FastMCP) -> None:
             return result or {"status": "completed", "task_id": task_id}
         except Exception as e:
             logger.error(f"Failed to complete task {task_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="claim_task", description="Verify a task is ready to be completed (claiming is implicit)")
     async def claim_task(
@@ -216,4 +217,4 @@ def register_task_tools(mcp: FastMCP) -> None:
             }
         except Exception as e:
             logger.error(f"Failed to claim task {task_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)

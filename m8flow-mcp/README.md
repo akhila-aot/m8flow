@@ -88,6 +88,8 @@ cp sample.env .env         # Windows: copy sample.env .env
 | KEYCLOAK_REALM | m8flow | Keycloak realm |
 | CLIENT_ID | m8flow-backend | Keycloak client used by the MCP server |
 | CLIENT_SECRET | | Client secret (required for browser/OIDC login) |
+| AUTHZ_SERVER_PUBLIC_KEY_PATH | | Path to a public key file for local JWT verification (optional) |
+| TOKEN_REFRESH_MARGIN | 30 | Seconds before a ROPC token expires to proactively refresh it |
 | M8FLOW_BEARER_TOKEN | | Static bearer token |
 | KEYCLOAK_USERNAME | | Username for ROPC authentication |
 | KEYCLOAK_PASSWORD | | Password for ROPC authentication |
@@ -98,8 +100,13 @@ cp sample.env .env         # Windows: copy sample.env .env
 | MCP_OIDC_ISSUER_URL | | Public issuer URL (defaults to base URL) |
 | MCP_OIDC_REDIRECT_PATH | /oauth/callback | OAuth callback path |
 | MCP_OIDC_REQUIRE_CONSENT | false | Require the OAuth consent screen |
+| DEFAULT_TENANT_ID | | Fallback tenant id for service/global-realm tokens with no org membership |
+| SHARED_REALM_IDENTIFIER | | Tenant-finalization auth identifier (defaults to KEYCLOAK_REALM) |
+| ORGANIZATION_SCOPE | organization | Keycloak scope requested to enumerate org memberships (empty to disable) |
 | LOG_LEVEL | INFO | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | LOG_FORMAT | json | `json` or `text` |
+| DEBUG | false | Enable debug mode |
+| RELOAD | false | Auto-reload on code changes (used by `make run-dev`) |
 
 ---
 

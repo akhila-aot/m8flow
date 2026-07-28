@@ -21,6 +21,10 @@ _company_id_var: ContextVar[str | None] = ContextVar(COMPANY_ID_KEY, default=Non
 # exactly like a finalized web session.
 _finalized_token_var: ContextVar[str | None] = ContextVar("finalized_token", default=None)
 
+# Per-request correlation id set by ObservabilityMiddleware, so every log line for a
+# request (and the error envelope, if the request fails) can be tied together.
+_correlation_id_var: ContextVar[str | None] = ContextVar("correlation_id", default=None)
+
 
 def _oidc_session_token() -> str | None:
     """Return the per-user access token from an active OIDCProxy session, if any.
@@ -138,9 +142,26 @@ def set_company_id(company_id: str) -> None:
     _company_id_var.set(company_id)
 
 
+def get_correlation_id() -> str | None:
+    """Get the current request's correlation id, if one has been set."""
+    return _correlation_id_var.get()
+
+
+def set_correlation_id(correlation_id: str | None) -> None:
+    """Set the correlation id for the current request."""
+    _correlation_id_var.set(correlation_id)
+
+
 def clear_context() -> None:
-    """Clear all context variables."""
+    """Clear all request-scoped context variables.
+
+    Called at the end of every request (see ObservabilityMiddleware) so that
+    tenant/token/correlation state from one request can never leak into the
+    next one processed on the same task — ContextVar values otherwise persist
+    for the lifetime of the task/coroutine that set them, not just one request.
+    """
     _auth_token_var.set(None)
     _tenant_id_var.set(None)
     _company_id_var.set(None)
     _finalized_token_var.set(None)
+    _correlation_id_var.set(None)

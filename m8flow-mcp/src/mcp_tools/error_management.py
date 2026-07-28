@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from src.api_client import M8flowAPIClient
+from src.errors import to_error_envelope
 from src.utils.context import get_auth_token
 from src.utils.instances import resolve_instance
 from src.utils.logging import get_logger
@@ -142,7 +143,7 @@ def register_error_tools(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to list process errors: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="get_error_details", description="Get detailed error information for troubleshooting")
     async def get_error_details(
@@ -209,7 +210,7 @@ def register_error_tools(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to get error details: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="diagnose_workflow", description="Diagnose why a workflow is stuck or failed")
     async def diagnose_workflow(
@@ -279,14 +280,14 @@ def register_error_tools(mcp: FastMCP) -> None:
 - 📖 Use `tools_documentation(topic="troubleshooting")` for help
 """
             elif status == "suspended":
-                diagnosis += """
+                diagnosis += f"""
 - ⏸️ Workflow is suspended (paused)
 - ✅ May be waiting for user action (check tasks)
 - 🔍 Review current task with `task://` resource
 - 📋 Check for pending tasks with `list_tasks(process_instance_id={process_instance_id})`
 """
             elif status == "waiting":
-                diagnosis += """
+                diagnosis += f"""
 - ⏳ Workflow is waiting
 - ✅ This is normal - waiting for task completion
 - 📋 Check pending tasks with `list_tasks(process_instance_id={process_instance_id})`
@@ -299,7 +300,7 @@ def register_error_tools(mcp: FastMCP) -> None:
 - 📖 Review results in workflow variables
 """
             else:
-                diagnosis += """
+                diagnosis += f"""
 - ℹ️ Status is '{status}'
 - 🔍 Review workflow state with `workflow://{process_instance_id}` resource
 - 📖 Check `tools_documentation(topic="troubleshooting")` for guidance
@@ -319,4 +320,5 @@ def register_error_tools(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to diagnose workflow: {e}")
-            return f"**Error diagnosing workflow:** {str(e)}"
+            err = to_error_envelope(e)["error"]
+            return f"**Error diagnosing workflow ({err['category']}):** {err['message']}"

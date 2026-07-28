@@ -11,6 +11,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastmcp import FastMCP
 
 
 class MockFastMCP:
@@ -51,9 +52,26 @@ async def test_count_tasks_for_instance_uses_task_info():
     ):
         mock_get.side_effect = [FIND_BY_ID, TASK_INFO]
 
-        result = await mcp.tools["count_tasks"](process_instance_id="7")
+        result = await mcp.tools["count_tasks"](process_instance_id=7)
 
         assert result["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_count_tasks_schema_types_process_instance_id_as_integer():
+    """Regression test: process_instance_id must be int, matching every other
+    tool's instance-id parameter (was previously typed str here only)."""
+    from src.mcp_tools.count_tools import register_count_tools
+
+    real_mcp = FastMCP("test")
+    register_count_tools(real_mcp)
+
+    tools = await real_mcp.list_tools()
+    count_tasks_tool = next(t for t in tools if t.name == "count_tasks")
+    param_schema = count_tasks_tool.parameters["properties"]["process_instance_id"]
+
+    types = {option["type"] for option in param_schema["anyOf"]}
+    assert types == {"integer", "null"}
 
 
 @pytest.mark.asyncio

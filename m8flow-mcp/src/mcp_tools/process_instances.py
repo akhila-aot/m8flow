@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal
 
 from src.api_client import M8flowAPIClient
+from src.errors import to_error_envelope
 from src.utils.context import get_auth_token
 from src.utils.instances import resolve_instance
 from src.utils.logging import get_logger
@@ -93,7 +94,7 @@ def register_process_instance_tools(mcp: FastMCP) -> None:
             return result
         except Exception as e:
             logger.error(f"Failed to start process instance for {process_model_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="list_process_instances", description="List workflow process instances with progressive detail")
     async def list_process_instances(
@@ -174,7 +175,7 @@ def register_process_instance_tools(mcp: FastMCP) -> None:
             return result
         except Exception as e:
             logger.error(f"Failed to list process instances: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(
         name="get_process_instance",
@@ -245,7 +246,7 @@ def register_process_instance_tools(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to get process instance {process_instance_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="cancel_process_instance", description="Cancel (terminate) a running process instance")
     async def cancel_process_instance(process_instance_id: int) -> dict[str, Any]:
@@ -273,7 +274,7 @@ def register_process_instance_tools(mcp: FastMCP) -> None:
             return result or {"status": "cancelled", "id": process_instance_id}
         except Exception as e:
             logger.error(f"Failed to cancel process instance {process_instance_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)
 
     @mcp.tool(name="suspend_process_instance", description="Suspend a running process instance")
     async def suspend_process_instance(process_instance_id: int) -> dict[str, Any]:
@@ -298,4 +299,4 @@ def register_process_instance_tools(mcp: FastMCP) -> None:
             return result or {"status": "suspended", "id": process_instance_id}
         except Exception as e:
             logger.error(f"Failed to suspend process instance {process_instance_id}: {e}")
-            return {"error": str(e)}
+            return to_error_envelope(e)

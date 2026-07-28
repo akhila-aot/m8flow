@@ -61,6 +61,13 @@ def ropc_settings(monkeypatch):
     monkeypatch.setattr(settings, "keycloak_username", "svc")
     monkeypatch.setattr(settings, "keycloak_password", "pw")
     monkeypatch.setattr(settings, "client_secret", None)
+    # Pin these explicitly rather than inheriting whatever REQUIRED_SCOPES /
+    # ORGANIZATION_SCOPE happen to be in the developer's local .env (pydantic-settings
+    # loads it by default) — otherwise a .env with "organization" folded directly into
+    # REQUIRED_SCOPES makes auth_scopes_list == required_scopes_list, which silently
+    # breaks _org_scope_fallback's ability to tell "with org scope" apart from "without".
+    monkeypatch.setattr(settings, "required_scopes", "openid,profile,email")
+    monkeypatch.setattr(settings, "organization_scope", "organization")
     return settings
 
 
@@ -84,8 +91,8 @@ def test_get_token_sync_retries_without_org_scope_on_invalid_scope(monkeypatch, 
 
     assert token  # succeeded on the retry
     assert len(scopes_seen) == 2
-    assert "organization:*" in scopes_seen[0]  # first attempt requested org scope
-    assert "organization:*" not in scopes_seen[1]  # retry dropped it
+    assert "organization" in scopes_seen[0]  # first attempt requested org scope
+    assert "organization" not in scopes_seen[1]  # retry dropped it
 
 
 def test_get_token_sync_no_retry_when_first_succeeds(monkeypatch, ropc_settings):
@@ -96,7 +103,7 @@ def test_get_token_sync_no_retry_when_first_succeeds(monkeypatch, ropc_settings)
     svc = TokenService()
     assert svc.get_token_sync()
     assert len(scopes_seen) == 1  # exactly one attempt
-    assert "organization:*" in scopes_seen[0]
+    assert "organization" in scopes_seen[0]
 
 
 def test_get_token_sync_non_scope_400_raises(monkeypatch, ropc_settings):

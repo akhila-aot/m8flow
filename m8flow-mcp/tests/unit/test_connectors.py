@@ -414,7 +414,10 @@ async def test_list_connectors_api_error():
 
         assert isinstance(result, str)
         assert "Error fetching connectors" in result
-        assert "API connection failed" in result
+        # Safe, categorized message — never the raw exception text (which could
+        # carry backend internals like connection strings or stack details).
+        assert "API connection failed" not in result
+        assert "(unknown)" in result
 
 
 @pytest.mark.asyncio

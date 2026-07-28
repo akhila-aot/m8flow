@@ -43,9 +43,8 @@ async def test_create_process_model_nests_id_and_defaults_description():
 
         # description omitted → must still be sent as ""
         await mcp.tools["create_process_model"](
-            identifier="expense-approval",
+            process_model_id="finance/expense-approval",
             display_name="Expense Approval",
-            process_group_id="finance",
         )
 
         body = mock_post.call_args.kwargs["data"]

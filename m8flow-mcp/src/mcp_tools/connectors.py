@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING
 
 from src.api_client import M8flowAPIClient
+from src.errors import to_error_envelope
 from src.utils.context import get_auth_token, get_tenant_id
 from src.utils.logging import get_logger
 
@@ -156,7 +157,8 @@ def register_connector_tools(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to list connectors: {e}", exc_info=True)
-            return f"❌ Error fetching connectors: {str(e)}"
+            err = to_error_envelope(e)["error"]
+            return f"❌ Error fetching connectors ({err['category']}): {err['message']}"
 
     @mcp.tool(
         name="get_connector",
@@ -223,7 +225,8 @@ def register_connector_tools(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to get connector {connector_id}: {e}", exc_info=True)
-            return f"❌ Error fetching connector: {str(e)}"
+            err = to_error_envelope(e)["error"]
+            return f"❌ Error fetching connector ({err['category']}): {err['message']}"
 
     @mcp.tool(
         name="get_connector_operation",
@@ -311,7 +314,8 @@ def register_connector_tools(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to get operation {operation_id}: {e}", exc_info=True)
-            return f"❌ Error fetching operation: {str(e)}"
+            err = to_error_envelope(e)["error"]
+            return f"❌ Error fetching operation ({err['category']}): {err['message']}"
 
     @mcp.tool(
         name="search_connectors",
@@ -412,4 +416,5 @@ def register_connector_tools(mcp: FastMCP) -> None:
 
         except Exception as e:
             logger.error(f"Failed to search connectors: {e}", exc_info=True)
-            return f"❌ Error searching connectors: {str(e)}"
+            err = to_error_envelope(e)["error"]
+            return f"❌ Error searching connectors ({err['category']}): {err['message']}"
